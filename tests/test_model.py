@@ -1,139 +1,201 @@
 """
-test_model.py — 14 tests automatiques de validation du modèle.
+test_model.py — Tests automatiques sur le modèle entraîné.
+
+Ces tests vérifient que le modèle :
+1. A bien été sauvegardé
+2. Peut faire des prédictions
+3. Produit des prédictions valides et cohérentes
+4. A de bonnes performances (métriques)
 """
 
-import pytest
-import pandas as pd
+import json
+import os
+
+import joblib
 import numpy as np
-import pickle
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, f1_score
-
-
-@pytest.fixture
-def sample_model():
-    """Créer un modèle simple pour les tests."""
-    X = np.random.rand(100, 15)
-    y = np.random.randint(0, 2, 100)
-    model = RandomForestClassifier(n_estimators=10, random_state=42)
-    model.fit(X, y)
-    return model, X, y
+import pytest
 
 
 # ─────────────────────────────────────────────────────────────
-# TESTS DE VALIDITÉ DU MODÈLE
+# FIXTURES
 # ─────────────────────────────────────────────────────────────
 
-def test_model_is_classifier(sample_model):
-    """Test 1: Le modèle doit être un classificateur valide."""
-    model, _, _ = sample_model
-    assert hasattr(model, 'predict'), "Le modèle doit avoir la méthode predict"
-    assert hasattr(model, 'predict_proba'), "Le modèle doit avoir predict_proba"
+@pytest.fixture(scope="module")
+def model():
+    """Charger le modèle entraîné."""
+    assert os.path.exists("models/model.pkl"), \
+        "ERREUR : models/model.pkl introuvable. Avez-vous lancé train.py ?"
+    return joblib.load("models/model.pkl")
 
 
-def test_model_predictions_shape(sample_model):
-    """Test 2: Les prédictions doivent avoir la bonne forme."""
-    model, X, _ = sample_model
-    predictions = model.predict(X[:10])
-    assert predictions.shape[0] == 10, "Devrait prédire pour 10 échantillons"
+@pytest.fixture(scope="module")
+def scaler():
+    """Charger le scaler."""
+    assert os.path.exists("models/scaler.pkl"), \
+        "ERREUR : models/scaler.pkl introuvable."
+    return joblib.load("models/scaler.pkl")
 
 
-def test_model_probability_shape(sample_model):
-    """Test 3: Les probabilités doivent avoir la bonne forme."""
-    model, X, _ = sample_model
-    proba = model.predict_proba(X[:10])
-    assert proba.shape[0] == 10, "Devrait avoir 10 probabilités"
-    assert proba.shape[1] == 2, "Devrait avoir 2 classes"
+@pytest.fixture(scope="module")
+def metrics():
+    """Charger les métriques sauvegardées."""
+    assert os.path.exists("models/metrics.json"), \
+        "ERREUR : models/metrics.json introuvable."
+    with open("models/metrics.json", "r") as f:
+        return json.load(f)
 
 
-def test_probability_sums_to_one(sample_model):
-    """Test 4: Les probabilités doivent sommer à 1."""
-    model, X, _ = sample_model
-    proba = model.predict_proba(X)
-    assert np.allclose(proba.sum(axis=1), 1.0), \
-        "Les probabilités ne somment pas à 1"
+@pytest.fixture(scope="module")
+def exemple_client():
+    """Un exemple de client pour tester les prédictions."""
+    return np.array([[
+        35,       # age
+        12,       # anciennete_mois
+        0,        # type_contrat (Mensuel)
+        75.0,     # facture_mensuelle
+        900.0,    # facture_totale
+        1,        # telephone_multiple
+        1,        # internet (DSL)
+        0,        # securite_en_ligne
+        1,        # sauvegarde_en_ligne
+        0,        # protection_appareil
+        1,        # support_tech
+        0,        # streaming_tv
+        1,        # streaming_films
+        1,        # facture_electronique
+        0         # mode_paiement (Virement)
+    ]])
 
 
-def test_model_accuracy_positive(sample_model):
-    """Test 5: L'accuracy doit être positive."""
-    model, X, y = sample_model
-    accuracy = model.score(X, y)
-    assert 0 <= accuracy <= 1, "L'accuracy doit être entre 0 et 1"
+# ─────────────────────────────────────────────────────────────
+# TESTS D'EXISTENCE DES FICHIERS
+# ─────────────────────────────────────────────────────────────
+
+def test_fichier_modele_existe():
+    """Le fichier modèle doit exister après l'entraînement."""
+    assert os.path.exists("models/model.pkl"), \
+        "Le modèle n'a pas été sauvegardé !"
 
 
-def test_model_serialization(sample_model, tmp_path):
-    """Test 6: Le modèle doit être sérialisable."""
-    model, _, _ = sample_model
-    filepath = tmp_path / "model.pkl"
-    with open(filepath, 'wb') as f:
-        pickle.dump(model, f)
-    assert filepath.exists(), "Le modèle n'a pas été sauvegardé"
+def test_fichier_scaler_existe():
+    """Le scaler doit exister après l'entraînement."""
+    assert os.path.exists("models/scaler.pkl"), \
+        "Le scaler n'a pas été sauvegardé !"
 
 
-def test_model_deserialization(sample_model, tmp_path):
-    """Test 7: Le modèle doit être désérialisable."""
-    model, X, _ = sample_model
-    filepath = tmp_path / "model.pkl"
-    
-    with open(filepath, 'wb') as f:
-        pickle.dump(model, f)
-    
-    with open(filepath, 'rb') as f:
-        loaded_model = pickle.load(f)
-    
-    assert hasattr(loaded_model, 'predict'), \
-        "Le modèle chargé doit avoir la méthode predict"
+def test_fichier_metriques_existe():
+    """Le fichier de métriques doit exister."""
+    assert os.path.exists("models/metrics.json"), \
+        "Le fichier metrics.json n'a pas été créé !"
 
 
-def test_model_feature_importance(sample_model):
-    """Test 8: Le modèle doit retourner l'importance des features."""
-    model, _, _ = sample_model
-    importance = model.feature_importances_
-    assert len(importance) == 15, "Devrait avoir 15 importances"
-    assert np.sum(importance) > 0, "L'importance doit être positive"
+# ─────────────────────────────────────────────────────────────
+# TESTS DE PRÉDICTION
+# ─────────────────────────────────────────────────────────────
+
+def test_modele_peut_predire(model, scaler, exemple_client):
+    """Le modèle doit pouvoir faire une prédiction sans erreur."""
+    client_scaled = scaler.transform(exemple_client)
+    prediction = model.predict(client_scaled)
+    assert prediction is not None, "La prédiction est None !"
+    assert len(prediction) == 1, "Une seule prédiction attendue !"
 
 
-def test_model_consistency(sample_model):
-    """Test 9: Les prédictions doivent être cohérentes."""
-    model, X, _ = sample_model
-    pred1 = model.predict(X[:5])
-    pred2 = model.predict(X[:5])
-    assert np.array_equal(pred1, pred2), \
-        "Les prédictions doivent être identiques"
+def test_prediction_est_binaire(model, scaler, exemple_client):
+    """La prédiction doit être 0 (reste) ou 1 (churn)."""
+    client_scaled = scaler.transform(exemple_client)
+    prediction = model.predict(client_scaled)
+    assert prediction[0] in [0, 1], \
+        f"Prédiction invalide : {prediction[0]} (attendu : 0 ou 1)"
 
 
-def test_model_input_validation(sample_model):
-    """Test 10: Le modèle doit valider l'entrée."""
-    model, _, _ = sample_model
-    with pytest.raises((ValueError, IndexError)):
-        model.predict(np.random.rand(10, 5))  # Mauvais nombre de features
+def test_probabilites_sommees_a_1(model, scaler, exemple_client):
+    """Les probabilités pour chaque classe doivent sommer à 1."""
+    client_scaled = scaler.transform(exemple_client)
+    probas = model.predict_proba(client_scaled)[0]
+    assert abs(sum(probas) - 1.0) < 1e-6, \
+        f"Les probabilités ne somment pas à 1 : {sum(probas)}"
 
 
-def test_model_n_estimators(sample_model):
-    """Test 11: Le RandomForest doit avoir le bon nombre d'arbres."""
-    model, _, _ = sample_model
-    assert model.n_estimators == 10, "Devrait avoir 10 arbres"
+def test_probabilites_entre_0_et_1(model, scaler, exemple_client):
+    """Chaque probabilité doit être entre 0 et 1."""
+    client_scaled = scaler.transform(exemple_client)
+    probas = model.predict_proba(client_scaled)[0]
+    for p in probas:
+        assert 0.0 <= p <= 1.0, \
+            f"Probabilité invalide : {p} (doit être entre 0 et 1)"
 
 
-def test_model_predictions_in_range(sample_model):
-    """Test 12: Les prédictions doivent être 0 ou 1."""
-    model, X, _ = sample_model
-    predictions = model.predict(X)
-    assert set(predictions).issubset({0, 1}), \
-        "Les prédictions doivent être 0 ou 1"
+def test_nombre_classes(model):
+    """Le modèle doit avoir exactement 2 classes (0 et 1)."""
+    assert len(model.classes_) == 2, \
+        f"Nombre de classes inattendu : {len(model.classes_)} (attendu : 2)"
+    assert list(model.classes_) == [0, 1], \
+        f"Classes inattendues : {model.classes_} (attendu : [0, 1])"
 
 
-def test_model_classes(sample_model):
-    """Test 13: Le modèle doit tracker les classes."""
-    model, _, _ = sample_model
-    classes = model.classes_
-    assert len(classes) == 2, "Devrait avoir 2 classes"
-    assert set(classes).issubset({0, 1}), "Les classes doivent être 0 et 1"
+def test_prediction_coherente_client_risque(model, scaler):
+    """
+    Un client à très haut risque (contrat mensuel, peu d'ancienneté,
+    facture élevée, pas de support) doit avoir une probabilité de churn > 50%.
+    """
+    client_risque = np.array([[
+        25, 2, 0, 115.0, 230.0, 0, 2, 0, 0, 0, 0, 1, 1, 0, 3
+    ]])
+    client_scaled = scaler.transform(client_risque)
+    prob_churn = model.predict_proba(client_scaled)[0][1]
+    assert prob_churn > 0.5, \
+        f"Client à haut risque : probabilité de churn trop faible ({prob_churn:.2%})"
 
 
-def test_model_max_depth(sample_model):
-    """Test 14: Les arbres doivent avoir une profondeur raisonnable."""
-    model, _, _ = sample_model
-    max_depths = [tree.get_depth() for tree in model.estimators_]
-    assert len(max_depths) > 0, "Devrait avoir des arbres"
-    assert max(max_depths) > 0, "Les arbres doivent avoir une profondeur positive"
+def test_prediction_coherente_client_fidele(model, scaler):
+    """
+    Un client fidèle (contrat biennal, longue ancienneté, facture basse,
+    support tech) doit avoir une probabilité de churn < 30%.
+    """
+    client_fidele = np.array([[
+        55, 60, 2, 40.0, 2400.0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0
+    ]])
+    client_scaled = scaler.transform(client_fidele)
+    prob_churn = model.predict_proba(client_scaled)[0][1]
+    assert prob_churn < 0.30, \
+        f"Client fidèle : probabilité de churn trop élevée ({prob_churn:.2%})"
+
+
+def test_predictions_sur_plusieurs_clients(model, scaler):
+    """Le modèle doit gérer un batch de plusieurs clients à la fois."""
+    clients = np.random.rand(10, 15)  # 10 clients, 15 features
+    clients_scaled = scaler.transform(clients)
+    predictions = model.predict(clients_scaled)
+    assert len(predictions) == 10, \
+        "Le modèle doit retourner 10 prédictions pour 10 clients"
+
+
+# ─────────────────────────────────────────────────────────────
+# TESTS DE PERFORMANCE (métriques)
+# ─────────────────────────────────────────────────────────────
+
+def test_accuracy_suffisante(metrics):
+    """L'accuracy doit dépasser 75%."""
+    assert metrics["accuracy"] >= 0.75, \
+        f"Accuracy insuffisante : {metrics['accuracy']:.4f} (minimum : 0.75)"
+
+
+def test_f1_score_suffisant(metrics):
+    """Le F1-score doit dépasser 0.60."""
+    assert metrics["f1_score"] >= 0.60, \
+        f"F1-score insuffisant : {metrics['f1_score']:.4f} (minimum : 0.60)"
+
+
+def test_roc_auc_suffisant(metrics):
+    """Le ROC-AUC doit dépasser 0.75."""
+    assert metrics["roc_auc"] >= 0.75, \
+        f"ROC-AUC insuffisant : {metrics['roc_auc']:.4f} (minimum : 0.75)"
+
+
+def test_metriques_json_contient_champs_requis(metrics):
+    """Le fichier metrics.json doit contenir les champs requis."""
+    champs_requis = ["accuracy", "f1_score", "roc_auc"]
+    for champ in champs_requis:
+        assert champ in metrics, \
+            f"Champ manquant dans metrics.json : '{champ}'"

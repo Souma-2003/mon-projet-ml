@@ -71,3 +71,236 @@ jobs:
         with:
           name: model-artifacts
           path: models/
+# ══════════════════════════════════════════════════════════════════
+#  CI PIPELINE — Intégration Continue pour le modèle de Churn ML
+#  Fichier : .github/workflows/ci.yml
+#
+#  Ce pipeline se déclenche à chaque push et vérifie :
+#  1. La qualité du code Python
+#  2. La validité des données
+#  3. L'entraînement et les performances du modèle
+# ══════════════════════════════════════════════════════════════════
+
+name: "CI — Churn ML Pipeline"
+
+# ─────────────────────────────────────────────────────────────────
+# DÉCLENCHEURS
+# Quand est-ce que ce workflow se lance automatiquement ?
+# ─────────────────────────────────────────────────────────────────
+on:
+  push:
+    branches:
+      - main       # Chaque push sur la branche principale
+      - develop    # Chaque push sur la branche de développement
+      - "feature/*"  # Chaque push sur une branche feature/...
+  pull_request:
+    branches:
+      - main       # Chaque Pull Request vers main
+
+# Optionnel : lancer le pipeline manuellement depuis GitHub
+  workflow_dispatch:
+
+# ─────────────────────────────────────────────────────────────────
+# VARIABLES D'ENVIRONNEMENT GLOBALES
+# Disponibles dans tous les jobs
+# ─────────────────────────────────────────────────────────────────
+env:
+  PYTHON_VERSION: "3.10"
+
+# ══════════════════════════════════════════════════════════════════
+# JOBS
+# ══════════════════════════════════════════════════════════════════
+jobs:
+
+  # ════════════════════════════════════════════════════
+  # JOB 1 : QUALITÉ DU CODE
+  # Vérifie que le code est propre et bien formaté
+  # ════════════════════════════════════════════════════
+  code-quality:
+    name: "🔍 Qualité du code"
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Étape 1 : Télécharger le code ──────────────────────────
+      # actions/checkout télécharge ton repo sur le runner GitHub
+      - name: "📥 Checkout du code"
+        uses: actions/checkout@v4
+
+      # ── Étape 2 : Installer Python ──────────────────────────────
+      - name: "🐍 Installer Python ${{ env.PYTHON_VERSION }}"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          # Cache le dossier pip pour accélérer les prochaines exécutions
+          cache: "pip"
+
+      # ── Étape 3 : Installer les dépendances ─────────────────────
+      - name: "📦 Installer les dépendances"
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black
+
+      # ── Étape 4 : Vérifier le style avec flake8 ─────────────────
+      # flake8 est un linter : il cherche des erreurs dans le code
+      # ex : variables non utilisées, imports manquants, syntaxe incorrecte
+      - name: "✅ Vérification flake8 (linting)"
+        run: |
+          flake8 src/ tests/ \
+            --max-line-length=100 \
+            --exclude=__pycache__ \
+            --statistics
+          # --statistics : affiche le nombre d'erreurs par type
+
+      # ── Étape 5 : Vérifier le formatage avec black ──────────────
+      # black est un formateur automatique. On vérifie ici que le code
+      # EST DÉJÀ correctement formaté (sans modifier les fichiers)
+      - name: "✅ Vérification black (formatage)"
+        run: |
+          black --check --diff src/ tests/
+          # --check : ne modifie rien, retourne une erreur si mal formaté
+          # --diff  : affiche exactement ce qui diffère
+
+
+  # ════════════════════════════════════════════════════
+  # JOB 2 : GÉNÉRATION ET VALIDATION DES DONNÉES
+  # Génère les données et vérifie leur qualité
+  # ════════════════════════════════════════════════════
+  validate-data:
+    name: "📊 Validation des données"
+    runs-on: ubuntu-latest
+    needs: code-quality   # Ce job attend que code-quality soit ✅
+
+    steps:
+      - name: "📥 Checkout du code"
+        uses: actions/checkout@v4
+
+      - name: "🐍 Installer Python ${{ env.PYTHON_VERSION }}"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: "📦 Installer les dépendances"
+        run: |
+          pip install -r requirements.txt
+
+      # ── Générer le jeu de données ───────────────────────────────
+      # En production, cette étape serait remplacée par un téléchargement
+      # depuis un Data Lake / S3 / Google Cloud Storage
+      - name: "🗃️ Générer le jeu de données"
+        run: |
+          python data/generate_data.py
+
+      # ── Lancer les tests de données ─────────────────────────────
+      # pytest lance automatiquement tous les tests dans tests/test_data.py
+      - name: "🧪 Tests de qualité des données"
+        run: |
+          pytest tests/test_data.py \
+            -v \
+            --tb=short
+          # -v       : verbose (détaillé)
+          # --tb=short : afficher un traceback court en cas d'erreur
+
+      # ── Sauvegarder les données comme artifact ──────────────────
+      # Les autres jobs pourront télécharger ces données
+      - name: "💾 Sauvegarder les données (artifact)"
+        uses: actions/upload-artifact@v4
+        with:
+          name: dataset
+          path: data/data.csv
+          retention-days: 7
+
+
+  # ════════════════════════════════════════════════════
+  # JOB 3 : ENTRAÎNEMENT ET ÉVALUATION DU MODÈLE
+  # ════════════════════════════════════════════════════
+  train-and-evaluate:
+    name: "🤖 Entraînement + Évaluation"
+    runs-on: ubuntu-latest
+    needs: validate-data   # Ce job attend que validate-data soit ✅
+
+    steps:
+      - name: "📥 Checkout du code"
+        uses: actions/checkout@v4
+
+      - name: "🐍 Installer Python ${{ env.PYTHON_VERSION }}"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: "📦 Installer les dépendances"
+        run: |
+          pip install -r requirements.txt
+
+      # ── Télécharger les données validées ───────────────────────
+      # On récupère l'artifact généré par le job précédent
+      - name: "📥 Télécharger les données validées"
+        uses: actions/download-artifact@v4
+        with:
+          name: dataset
+          path: data/
+
+      # ── Entraîner le modèle ────────────────────────────────────
+      - name: "🏋️ Entraîner le modèle"
+        run: |
+          python src/train.py
+
+      # ── Évaluer les performances ───────────────────────────────
+      # Si accuracy/F1/ROC-AUC sont trop bas, sys.exit(1) stoppe le pipeline
+      - name: "📈 Valider les performances (seuils)"
+        run: |
+          python src/evaluate.py
+
+      # ── Tests sur le modèle entraîné ───────────────────────────
+      - name: "🧪 Tests du modèle"
+        run: |
+          pytest tests/test_model.py \
+            -v \
+            --tb=short \
+            --cov=src \
+            --cov-report=term-missing
+          # --cov=src          : mesurer la couverture de code du dossier src/
+          # --cov-report=term-missing : afficher les lignes non couvertes
+
+      # ── Tester les prédictions en inférence ────────────────────
+      - name: "🔮 Tester les prédictions (inférence)"
+        run: |
+          python src/predict.py
+
+      # ── Afficher les métriques dans les logs GitHub ─────────────
+      - name: "📋 Afficher les métriques finales"
+        run: |
+          echo "=== MÉTRIQUES DU MODÈLE ==="
+          cat models/metrics.json
+
+      # ── Sauvegarder le modèle comme artifact ───────────────────
+      # Le pipeline CD pourra récupérer ce modèle pour le déployer
+      - name: "💾 Sauvegarder le modèle (artifact)"
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-model-${{ github.sha }}
+          # github.sha = l'identifiant unique du commit actuel
+          # Chaque modèle est donc lié à un commit précis (traçabilité)
+          path: |
+            models/model.pkl
+            models/scaler.pkl
+            models/metrics.json
+          retention-days: 30
+
+      # ── Résumé dans GitHub Actions ──────────────────────────────
+      # Ceci ajoute un résumé visible directement dans l'interface GitHub
+      - name: "📝 Créer un résumé dans GitHub"
+        run: |
+          echo "## 🤖 Résultats de l'entraînement" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Métrique | Valeur |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          ACCURACY=$(python -c "import json; m=json.load(open('models/metrics.json')); print(f\"{m['accuracy']:.4f}\")")
+          F1=$(python -c "import json; m=json.load(open('models/metrics.json')); print(f\"{m['f1_score']:.4f}\")")
+          AUC=$(python -c "import json; m=json.load(open('models/metrics.json')); print(f\"{m['roc_auc']:.4f}\")")
+          echo "| Accuracy | $ACCURACY |" >> $GITHUB_STEP_SUMMARY
+          echo "| F1-Score | $F1 |" >> $GITHUB_STEP_SUMMARY
+          echo "| ROC-AUC  | $AUC |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Commit** : \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
