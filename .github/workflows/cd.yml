@@ -1,287 +1,43 @@
-# CD Workflow - Déployer en production
-
-name: CD
+name: "CD — Déploiement du modèle"
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types:
-      - completed
-    branches:
-      - main
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    name: Déployer en production
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Installer Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      
-      - name: Installer les dépendances
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      
-      - name: Générer les données
-        run: python data/generate_data.py
-      
-      - name: Entraîner le modèle en production
-        run: python src/train.py
-      
-      - name: Valider la performance
-        run: python src/evaluate.py
-      
-      - name: Uploader les artifacts finaux
-        uses: actions/upload-artifact@v3
-        with:
-          name: production-model
-          path: models/
-      
-      - name: Exécuter les prédictions de test
-        run: python src/predict.py
-# ══════════════════════════════════════════════════════════════════
-#  CD PIPELINE — Déploiement Continu du modèle de Churn ML
-#  Fichier : .github/workflows/cd.yml
-#
-#  Ce pipeline se déclenche UNIQUEMENT quand :
-#  → Le CI Pipeline a réussi sur la branche main
-#  → Un tag de version est créé (ex: v1.0.0)
-#
-#  Il déploie le modèle sous forme d'une API FastAPI.
-# ══════════════════════════════════════════════════════════════════
-
-name: "CD — Déploiement du modèle Churn"
-
-# ─────────────────────────────────────────────────────────────────
-# DÉCLENCHEURS
-# ─────────────────────────────────────────────────────────────────
-on:
-  # Se déclenche quand le CI Pipeline se termine
   workflow_run:
     workflows: ["CI — Churn ML Pipeline"]
+    types: [completed]
     branches: [main]
-    types:
-      - completed   # Quand le CI est terminé (succès OU échec)
 
-  # Permet aussi de déclencher manuellement depuis GitHub
   workflow_dispatch:
-    inputs:
-      environment:
-        description: "Environnement de déploiement"
-        required: true
-        default: "staging"
-        type: choice
-        options:
-          - staging
-          - production
 
 env:
   PYTHON_VERSION: "3.10"
 
-# ══════════════════════════════════════════════════════════════════
-# JOBS
-# ══════════════════════════════════════════════════════════════════
 jobs:
 
-  # ════════════════════════════════════════════════════
-  # JOB 1 : VÉRIFICATION AVANT DÉPLOIEMENT
-  # S'assure que le CI a bien réussi avant de déployer
-  # ════════════════════════════════════════════════════
-  check-ci-status:
-    name: "🛡️ Vérification CI"
+  deploy:
+    name: "🚀 Deploy Model"
     runs-on: ubuntu-latest
 
-    # Ne déployer QUE si le CI a réussi
-    # Si le CI a échoué, on n'entre même pas dans ce job
-    if: >
-      github.event.workflow_run.conclusion == 'success' ||
-      github.event_name == 'workflow_dispatch'
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
 
     steps:
-      - name: "✅ CI réussi — Déploiement autorisé"
-        run: |
-          echo "Le CI Pipeline a réussi."
-          echo "Déploiement du commit : ${{ github.sha }}"
-          echo "Branche : ${{ github.ref }}"
+      - uses: actions/checkout@v4
 
-
-  # ════════════════════════════════════════════════════
-  # JOB 2 : DÉPLOIEMENT EN STAGING
-  # Déploie sur l'environnement de test (staging)
-  # ════════════════════════════════════════════════════
-  deploy-staging:
-    name: "🚀 Déploiement Staging"
-    runs-on: ubuntu-latest
-    needs: check-ci-status
-    environment: staging   # Environnement GitHub (peut nécessiter une approbation manuelle)
-
-    steps:
-      - name: "📥 Checkout du code"
-        uses: actions/checkout@v4
-
-      - name: "🐍 Installer Python"
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: "pip"
 
-      - name: "📦 Installer les dépendances"
-        run: |
-          pip install -r requirements.txt
+      - run: pip install -r requirements.txt
 
-      # ── Générer les données et réentraîner ─────────────────────
-      # En production, on téléchargerait le modèle depuis S3 / MLflow
-      # Ici on simule l'entraînement complet pour la démonstration
-      - name: "🗃️ Générer les données"
-        run: python data/generate_data.py
+      - run: python data/generate_data.py
 
-      - name: "🏋️ Réentraîner le modèle (staging)"
-        run: python src/train.py
+      - run: python src/train.py
 
-      - name: "📈 Valider les performances"
-        run: python src/evaluate.py
+      - run: python src/evaluate.py
 
-      # ── Créer l'API de prédiction ──────────────────────────────
-      # On crée un script API simple pour servir le modèle
-      - name: "🔧 Préparer l'API de déploiement"
-        run: |
-          cat > api.py << 'EOF'
-          """
-          API de prédiction de Churn — créée automatiquement par le CD Pipeline.
-          Pour utiliser cette API :
-            pip install fastapi uvicorn
-            python api.py
-          Puis envoyer une requête POST à http://localhost:8000/predict
-          """
-          import json
-          import joblib
-          import numpy as np
+      - run: python src/predict.py
 
-          # Simuler un démarrage d'API (test de chargement du modèle)
-          model = joblib.load("models/model.pkl")
-          scaler = joblib.load("models/scaler.pkl")
-
-          with open("models/metrics.json") as f:
-              metrics = json.load(f)
-
-          print("=== API de Prédiction de Churn ===")
-          print(f"Modèle chargé avec succès")
-          print(f"ROC-AUC : {metrics['roc_auc']}")
-          print(f"F1-Score : {metrics['f1_score']}")
-          print("API prête à recevoir des prédictions.")
-
-          # Test de prédiction
-          test_input = np.array([[35, 12, 0, 75.0, 900.0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0]])
-          test_scaled = scaler.transform(test_input)
-          pred = model.predict(test_scaled)[0]
-          prob = model.predict_proba(test_scaled)[0][1]
-          print(f"Test de prédiction : {'CHURN' if pred == 1 else 'RESTE'} ({prob:.2%})")
-          EOF
-
-      # ── Tester le démarrage de l'API ───────────────────────────
-      - name: "🧪 Tester l'API de prédiction"
-        run: |
-          python api.py
-
-      # ── Sauvegarder le modèle déployé ─────────────────────────
-      - name: "💾 Archiver le modèle de staging"
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: "model-staging-${{ github.run_number }}"
-          # github.run_number = numéro de build (s'incrémente à chaque run)
-          path: |
-            models/
-            api.py
-          retention-days: 14
-
-      # ── Résumé du déploiement ──────────────────────────────────
-      - name: "📝 Résumé du déploiement Staging"
-        run: |
-          echo "## 🚀 Déploiement Staging réussi !" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environnement** : Staging" >> $GITHUB_STEP_SUMMARY
-          echo "- **Build** : #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit** : \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          ACCURACY=$(python -c "import json; m=json.load(open('models/metrics.json')); print(f\"{m['accuracy']:.4f}\")")
-          echo "- **Accuracy** : $ACCURACY" >> $GITHUB_STEP_SUMMARY
-
-
-  # ════════════════════════════════════════════════════
-  # JOB 3 : DÉPLOIEMENT EN PRODUCTION
-  # Se déclenche SEULEMENT après la validation du staging
-  # ET uniquement sur la branche main
-  # ════════════════════════════════════════════════════
-  deploy-production:
-    name: "🏭 Déploiement Production"
-    runs-on: ubuntu-latest
-    needs: deploy-staging   # Attend que staging soit OK
-    # En production réelle, tu ajouterais une approbation manuelle ici
-    # via : environment: production (avec protection rules dans GitHub)
-    if: >
-      github.ref == 'refs/heads/main' ||
-      github.event_name == 'workflow_dispatch'
-
-    steps:
-      - name: "📥 Checkout du code"
-        uses: actions/checkout@v4
-
-      - name: "🐍 Installer Python"
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: "pip"
-
-      - name: "📦 Installer les dépendances"
-        run: pip install -r requirements.txt
-
-      - name: "🗃️ Générer les données"
-        run: python data/generate_data.py
-
-      - name: "🏋️ Entraîner le modèle (production)"
-        run: python src/train.py
-
-      - name: "📈 Valider les performances"
-        run: python src/evaluate.py
-
-      # ── Créer un tag de version ────────────────────────────────
-      # On version le modèle avec le numéro de build
-      - name: "🏷️ Créer un tag de version"
-        run: |
-          VERSION="v1.0.${{ github.run_number }}"
-          echo "Version du modèle : $VERSION"
-          echo "MODEL_VERSION=$VERSION" >> $GITHUB_ENV
-
-      # ── Archiver en production ─────────────────────────────────
-      - name: "💾 Archiver le modèle de production"
-        uses: actions/upload-artifact@v4
-        with:
-          name: "model-production-${{ env.MODEL_VERSION }}"
+          name: production-model
           path: models/
-          retention-days: 90   # Garder 90 jours en production
-
-      # ── Résumé final ───────────────────────────────────────────
-      - name: "📝 Résumé du déploiement Production"
-        run: |
-          echo "## 🏭 DÉPLOIEMENT PRODUCTION RÉUSSI !" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Champ | Valeur |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Version | ${{ env.MODEL_VERSION }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build  | #${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
-          ACCURACY=$(python -c "import json; m=json.load(open('models/metrics.json')); print(f\"{m['accuracy']:.4f}\")")
-          F1=$(python -c "import json; m=json.load(open('models/metrics.json')); print(f\"{m['f1_score']:.4f}\")")
-          AUC=$(python -c "import json; m=json.load(open('models/metrics.json')); print(f\"{m['roc_auc']:.4f}\")")
-          echo "| Accuracy | $ACCURACY |" >> $GITHUB_STEP_SUMMARY
-          echo "| F1-Score | $F1 |" >> $GITHUB_STEP_SUMMARY
-          echo "| ROC-AUC  | $AUC |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Le modèle est maintenant en production !" >> $GITHUB_STEP_SUMMARY
